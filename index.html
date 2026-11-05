@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fridge-01: Build a Simulated Smart Refrigerator for IoT Testing</title>
 <style>
-:root{--bg:#eef4f6;--surface:#fff;--ink:#0f2430;--muted:#4a6270;--accent:#1f7a8c;--line:#c5d6dc;--warn-bg:#fff3dc;--warn-line:#c77b0a;--warn-ink:#4a2f00;--code-bg:#0f2430;--code-ink:#dcecf1}
+:root{--bg:#eef4f6;--surface:#fff;--ink:#0f2430;--muted:#4a6270;--accent:#166a7a;--line:#c5d6dc;--warn-bg:#fff3dc;--warn-line:#c77b0a;--warn-ink:#4a2f00;--code-bg:#0f2430;--code-ink:#dcecf1}
 @media (prefers-color-scheme:dark){:root{--bg:#0b1a22;--surface:#112733;--ink:#e4f0f4;--muted:#9bb5c1;--accent:#5cc0d3;--line:#24404f;--warn-bg:#3a2a0a;--warn-line:#e0a030;--warn-ink:#ffe6b0;--code-bg:#06121a}}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -27,12 +27,12 @@ section{padding:42px 0 6px;scroll-margin-top:56px}
 .notice{background:var(--warn-bg);border-left:6px solid var(--warn-line);color:var(--warn-ink);padding:18px 20px;margin:20px 0;border-radius:4px}
 .notice strong{display:block;font-size:1.1rem;margin-bottom:6px}
 .notice ul{margin:8px 0 0;padding-left:20px}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:18px 22px;margin:0 0 18px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:18px 22px;margin:0 0 18px;overflow-x:auto}
 pre{background:var(--code-bg);color:var(--code-ink);padding:14px 16px;border-radius:6px;overflow-x:auto;font:.85rem/1.5 ui-monospace,Menlo,Consolas,monospace;margin:0 0 16px}
 code{font:.88em ui-monospace,Menlo,Consolas,monospace;background:var(--line);color:var(--ink);padding:1px 6px;border-radius:3px}
 pre code{background:none;color:inherit;padding:0}
 .file{font:600 .9rem ui-monospace,Menlo,Consolas,monospace;color:var(--accent);margin:0 0 6px}
-table{border-collapse:collapse;width:100%;font-size:.95rem;display:block;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
 th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
 details{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 18px;margin-bottom:10px}
 summary{cursor:pointer;font-weight:700}
@@ -77,7 +77,7 @@ ul,ol{padding-left:22px}
 <tr><td>MQTT</td><td>Telemetry out, commands in</td><td>Hub or cloud messaging</td></tr>
 <tr><td>REST API and web UI</td><td>Status and control on port 80</td><td>Local admin page</td></tr>
 <tr><td>Avahi and systemd</td><td>Shows up in scans, starts at boot</td><td>Discovery and init</td></tr>
-<tr><td>Weak settings (optional)</td><td>Open broker, default login</td><td>Insecure vendor defaults</td></tr>
+<tr><td>Intentional weaknesses</td><td>Open broker and no web login by default; default SSH login in optional Task 7</td><td>Insecure vendor defaults</td></tr>
 </tbody></table></div>
 <p><strong>Roadmap:</strong> 1 Network and base VM, 2 State machine and sensors, 3 Verify the simulation, 4 MQTT, 5 REST API and web UI, 6 systemd and mDNS, 7 Optional weak services. Raspberry Pi users follow the same tasks after the <a href="#pi">Pi setup</a>.</p>
 </section>
@@ -114,6 +114,8 @@ systemctl status mosquitto --no-pager</code></pre>
   version: 2
   ethernets:
     enp0s8:
+      dhcp4: false
+      optional: true
       addresses: [192.168.56.10/24]</code></pre>
 <pre><code>sudo chmod 600 /etc/netplan/60-lab.yaml
 sudo netplan apply</code></pre>
@@ -121,7 +123,7 @@ sudo netplan apply</code></pre>
 <pre><code>sudo useradd --system --home /opt/fridge --shell /usr/sbin/nologin fridge
 sudo mkdir -p /opt/fridge &amp;&amp; sudo chown fridge:fridge /opt/fridge
 sudo -u fridge python3 -m venv /opt/fridge/venv
-sudo -u fridge /opt/fridge/venv/bin/pip install flask "paho-mqtt>=2.0"</code></pre>
+sudo -u fridge /opt/fridge/venv/bin/pip install flask "paho-mqtt&gt;=2.0"</code></pre>
 <p>Take a snapshot named <code>base-clean</code>. Vim tip: before pasting, type <code>:set paste</code>, press <code>i</code>, paste, then <code>Esc</code> and <code>:wq</code>.</p>
 
 <h3>Task 2: State machine and simulated sensors</h3>
@@ -161,6 +163,7 @@ class Fridge:
                 self.fault = value if value in ok else "SENSOR_FAIL"
             elif name == "clear_fault":
                 self.fault = None
+                self.defrost_left = 0
                 self.state = "IDLE"
                 self.temp = min(self.temp, 9.0)
 
@@ -298,7 +301,8 @@ def start(fridge):
 <pre><code>import os
 from flask import Flask, jsonify, request, abort
 
-PAGE = """&lt;h1&gt;fridge-01&lt;/h1&gt;&lt;pre id=s&gt;&lt;/pre&gt;
+PAGE = """&lt;!doctype html&gt;&lt;title&gt;fridge-01&lt;/title&gt;
+&lt;h1&gt;fridge-01&lt;/h1&gt;&lt;pre id=s&gt;&lt;/pre&gt;
 &lt;button onclick="c('start_defrost')"&gt;Start defrost&lt;/button&gt;
 &lt;button onclick="c('open_door')"&gt;Open door&lt;/button&gt;
 &lt;button onclick="c('set_temp',prompt('Setpoint C','3'))"&gt;Set temp&lt;/button&gt;
@@ -347,8 +351,8 @@ def loop():
 threading.Thread(target=loop, daemon=True).start()
 mqtt_bridge.start(fridge)
 web.create(fridge).run(host="0.0.0.0", port=80)</code></pre>
-<p>Port 80 needs extra permission, so for a quick manual test run it once as root, then press Ctrl+C. Task 6 gives it a proper setup.</p>
-<pre><code>sudo /opt/fridge/venv/bin/python3 /opt/fridge/main.py</code></pre>
+<p>Port 80 needs extra permission, so for a quick manual test run it once as root (the <code>-B</code> flag stops it creating root-owned cache files), then press Ctrl+C. Task 6 gives it a proper setup.</p>
+<pre><code>sudo /opt/fridge/venv/bin/python3 -B /opt/fridge/main.py</code></pre>
 <p>From a second terminal (or the tester VM) check each path:</p>
 <pre><code>curl http://192.168.56.10/api/status
 curl -X POST -H 'Content-Type: application/json' -d '{"value":"4"}' http://192.168.56.10/api/command/set_temp
@@ -396,7 +400,7 @@ sudo reboot</code></pre>
 
 <h3>Task 7 (optional): Weak settings to practice on</h3>
 <p>Only on the isolated lab network. Remove the NAT adapter first so the weak login cannot be reached from outside. These recreate common real-world mistakes:</p>
-<p class="unsure"><strong>Unverified:</strong> SSH uses the first value it reads for a setting, so the drop-in file is named <code>00-lab.conf</code> to win over other files. Confirm the result with the <code>sshd -T</code> check below.</p>
+<p class="unsure"><strong>Unverified:</strong> SSH uses the first value it reads for a setting, so the drop-in file is named <code>00-lab.conf</code> to win over other files. Confirm the result with the <code>sshd -T</code> check below. Ubuntu Server may already allow password login by default, in which case the line only makes it explicit.</p>
 <ul>
 <li>Open MQTT broker and unauthenticated web API (already the case from Tasks 4 and 5).</li>
 <li>Password SSH login with a default-style account:</li>
@@ -432,7 +436,7 @@ sudo sshd -T | grep -i passwordauthentication   # should print: yes</code></pre>
 <tbody>
 <tr><td>Web UI</td><td><code>http://fridge-01.local/</code></td><td>View and control</td></tr>
 <tr><td>REST status</td><td><code>GET /api/status</code></td><td>JSON state</td></tr>
-<tr><td>REST command</td><td><code>POST /api/command/&lt;name&gt;</code></td><td>set_temp, start_defrost, open_door, inject_fault, clear_fault</td></tr>
+<tr><td>REST command</td><td><code>POST /api/command/&lt;name&gt;</code></td><td>set_temp, start_defrost, open_door, clear_fault, and inject_fault (value SENSOR_FAIL, COMPRESSOR_FAIL, or HIGH_TEMP)</td></tr>
 <tr><td>MQTT telemetry</td><td><code>fridge-01/telemetry</code></td><td>JSON every 5 seconds</td></tr>
 <tr><td>MQTT commands</td><td><code>fridge-01/cmd/&lt;name&gt;</code></td><td>Payload is the value, if needed</td></tr>
 <tr><td>MQTT status</td><td><code>fridge-01/status</code></td><td>online or offline (last will)</td></tr>
@@ -512,9 +516,17 @@ keyfile /etc/mosquitto/certs/fridge.key</code></pre>
 <pre><code>MQTT_HOST=localhost
 MQTT_PORT=8883
 MQTT_CA=/etc/mosquitto/certs/fridge.crt</code></pre>
+<p>Test it from the lab VM (copy <code>fridge.crt</code> over first):</p>
+<pre><code>mosquitto_sub -h 192.168.56.10 -p 8883 --cafile fridge.crt -u operator -P 'yourpass' -t 'fridge-01/telemetry' -v</code></pre>
 <p>Capture traffic in Wireshark before and after to see the difference between port 1883 and 8883. Remove the plain 1883 listener once clients use TLS, and change the <code>_mqtt._tcp</code> port in the Avahi file to 8883.</p>
 <p class="unsure"><strong>Unverified:</strong> this TLS setup uses a self-signed certificate and was not run end to end. Testers connecting from another machine need a copy of the certificate and must connect by a name or address listed in it. Mosquitto's handling of permissions and listener settings can differ between versions.</p></details>
-<details><summary>5. Turn off services you do not use</summary><p>Disable password SSH (use key-based login), remove telnet, UPnP, and WPS, and close any port you do not need. Re-run <code>nmap -sV fridge-01</code> and confirm the list got shorter.</p></details>
+<details><summary>5. Turn off services you do not use</summary><p>Disable password SSH and use key-based login instead. Install your public key first, or you will lock yourself out. On the lab VM, undo Task 7 with:</p>
+<pre><code>sudo userdel -r admin
+sudo rm /etc/ssh/sshd_config.d/00-lab.conf
+echo 'PasswordAuthentication no' | sudo tee /etc/ssh/sshd_config.d/00-hardening.conf
+sudo systemctl restart ssh
+sudo sshd -T | grep -i passwordauthentication   # should print: no</code></pre>
+<p>On real devices also remove telnet, UPnP, and WPS, and close any port you do not need. Re-run <code>nmap -sV fridge-01</code> and confirm the list got shorter.</p></details>
 <details><summary>6. Never forward ports to a device</summary><p>Do not expose appliance interfaces to the internet. Use a VPN into your network, or the vendor's cloud with multi-factor authentication.</p></details>
 <details><summary>7. Keep firmware and software updated</summary><p>Check for updates on a schedule, and replace devices that no longer receive security patches. Prefer vendors with a published update policy.</p></details>
 <details><summary>8. Least privilege</summary><p>The service already runs as a dedicated account with systemd restrictions. Verify with <code>systemd-analyze security fridge</code> and tighten further.</p></details>
@@ -534,6 +546,9 @@ MQTT_CA=/etc/mosquitto/certs/fridge.crt</code></pre>
 <tr><td>Name <code>.local</code> not found</td><td><code>systemctl status avahi-daemon</code>, and make sure the tester resolves mDNS</td></tr>
 <tr><td>Stuck in FAULT</td><td>Send <code>clear_fault</code> by REST or MQTT</td></tr>
 <tr><td>Module not found</td><td>Run the service with <code>/opt/fridge/venv/bin/python3</code>, not the system Python</td></tr>
+<tr><td>Web buttons do nothing after hardening</td><td>Enter the API key when prompted, then click the button again</td></tr>
+<tr><td>MQTT connection refused after hardening or TLS</td><td><code>journalctl -u mosquitto -n 50 --no-pager</code>, then check file ownership, the username and password, and that the device user matches</td></tr>
+<tr><td>Boot waits about two minutes for the network</td><td>Mark unused interfaces <code>optional: true</code> in netplan, as in Task 1</td></tr>
 </tbody></table></div>
 </section>
 
@@ -546,9 +561,11 @@ MQTT_CA=/etc/mosquitto/certs/fridge.crt</code></pre>
 <li><strong>Hypervisor menu names:</strong> adapter and network names differ by product and version.</li>
 <li><strong>TLS and Mosquitto permissions:</strong> see the notes in the protection section. Behavior varies by Mosquitto version.</li>
 <li><strong>SSH drop-in precedence:</strong> verify with <code>sshd -T</code>, as shown in Task 7.</li>
-<li><strong>mDNS from the tester VM:</strong> <code>fridge-01.local</code> only resolves if the tester has an mDNS resolver such as Avahi.</li>
+<li><strong>mDNS from the tester VM:</strong> <code>fridge-01.local</code> only resolves if the tester has an mDNS resolver. On Ubuntu or Debian testers, install <code>libnss-mdns</code>.</li>
 <li><strong>HIGH_TEMP fault:</strong> the cabinet rarely gets hot enough on its own to trigger it. Use <code>inject_fault</code> with the value <code>HIGH_TEMP</code>.</li>
-<li><strong>Manual test as root (Task 5):</strong> it is a shortcut and can leave root-owned files in <code>/opt/fridge</code>. If the service later fails with permission errors, run <code>sudo chown -R fridge:fridge /opt/fridge</code>.</li>
+<li><strong>Manual test as root (Task 5):</strong> a shortcut. The <code>-B</code> flag avoids root-owned cache files, but if the service later fails with permission errors, run <code>sudo chown -R fridge:fridge /opt/fridge</code>.</li>
+<li><strong>Boot delay after removing the NAT adapter:</strong> the installer's network config may wait up to two minutes for the missing adapter. Marking it <code>optional: true</code> in netplan should stop that, but I have not tested it.</li>
+<li><strong>SSH password login:</strong> Ubuntu Server may already allow it by default, and switching to key-only login locks you out if no key is installed first.</li>
 <li><strong>Flask development server:</strong> fine for a lab. It is not a production web server.</li>
 <li><strong>Raspberry Pi hardware sensors:</strong> outlined only, not tested.</li>
 <li><strong>CSRF and retained-message exercises:</strong> described from how the code and broker should behave. Confirm them in your lab.</li>
