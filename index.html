@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fridge-01: Build a Simulated Smart Refrigerator for IoT Testing</title>
+<style>
+:root{--bg:#eef4f6;--surface:#fff;--ink:#0f2430;--muted:#4a6270;--accent:#1f7a8c;--line:#c5d6dc;--warn-bg:#fff3dc;--warn-line:#c77b0a;--warn-ink:#4a2f00;--code-bg:#0f2430;--code-ink:#dcecf1}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1a22;--surface:#112733;--ink:#e4f0f4;--muted:#9bb5c1;--accent:#5cc0d3;--line:#24404f;--warn-bg:#3a2a0a;--warn-line:#e0a030;--warn-ink:#ffe6b0;--code-bg:#06121a}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:780px;margin:0 auto;padding:0 20px}
+h1,h2,h3{font-family:Georgia,"Iowan Old Style",serif;line-height:1.2;margin:0}
+h1{font-size:2.4rem}h2{font-size:1.7rem;margin:0 0 14px}h3{font-size:1.25rem;margin:28px 0 10px}
+p{margin:0 0 14px;max-width:68ch}
+a{color:var(--accent)}
+a:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+header{background:#0f2430;color:#eef4f6;padding:52px 0 40px}
+header p{color:#b9d0d9;font-size:1.1rem}
+.temp{font:600 .95rem ui-monospace,Menlo,Consolas,monospace;color:#7fd3e3;margin-bottom:14px}
+nav{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav .wrap{display:flex;gap:20px;overflow-x:auto;padding-top:12px;padding-bottom:12px}
+nav a{white-space:nowrap;text-decoration:none;color:var(--ink);font-weight:600;font-size:.95rem}
+section{padding:42px 0 6px}
+.notice{background:var(--warn-bg);border-left:6px solid var(--warn-line);color:var(--warn-ink);padding:18px 20px;margin:20px 0;border-radius:4px}
+.notice strong{display:block;font-size:1.1rem;margin-bottom:6px}
+.notice ul{margin:8px 0 0;padding-left:20px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:18px 22px;margin:0 0 18px}
+pre{background:var(--code-bg);color:var(--code-ink);padding:14px 16px;border-radius:6px;overflow-x:auto;font:.85rem/1.5 ui-monospace,Menlo,Consolas,monospace;margin:0 0 16px}
+code{font:.88em ui-monospace,Menlo,Consolas,monospace;background:var(--line);color:var(--ink);padding:1px 6px;border-radius:3px}
+pre code{background:none;color:inherit;padding:0}
+.file{font:600 .9rem ui-monospace,Menlo,Consolas,monospace;color:var(--accent);margin:0 0 6px}
+table{border-collapse:collapse;width:100%;font-size:.95rem;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+details{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 18px;margin-bottom:10px}
+summary{cursor:pointer;font-weight:700}
+details[open] summary{margin-bottom:8px}
+details p:last-child{margin-bottom:0}
+footer{padding:40px 0 60px;color:var(--muted);font-size:.95rem}
+ul,ol{padding-left:22px}
+@media (max-width:560px){h1{font-size:1.9rem}body{font-size:17px}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<div class="temp">fridge-01 &middot; cooling &middot; 3.4 &deg;C &middot; door closed</div>
+<h1>Fridge-01: build a simulated smart refrigerator</h1>
+<p>A complete guide to a realistic fake appliance with temperature sensing, defrost mode, MQTT, a web interface, and remote control. Built for testing, troubleshooting, and learning to protect real IoT devices.</p>
+</div></header>
+<nav aria-label="Sections"><div class="wrap">
+<a href="#purpose">Purpose</a><a href="#overview">Overview</a><a href="#network">Lab network</a><a href="#build">Build (VM)</a><a href="#pi">Raspberry Pi</a><a href="#use">Using it</a><a href="#protect">Protection</a><a href="#fix">Troubleshooting</a>
+</div></nav>
+<main class="wrap">
+
+<section id="purpose">
+<h2>Purpose and ground rules</h2>
+<p>This project creates a harmless lab device that reports temperature, runs a defrost cycle, and accepts remote commands, the way a store display cooler or smart refrigerator does. Use it to learn how IoT devices communicate, practice troubleshooting, and see how attackers find weak ones.</p>
+<div class="notice" role="note"><strong>For testing and education only</strong>
+<ul>
+<li>Run it only in a lab you own, on an isolated network.</li>
+<li>Never expose the intentionally weak settings (open MQTT, no web login, default passwords) to the internet or your home network.</li>
+<li>Only test devices and networks you own or have written permission to test.</li>
+<li>This is a target you build for safe practice. It is not a tool for attacking real devices.</li>
+</ul></div>
+</section>
+
+<section id="overview">
+<h2>What you will build</h2>
+<div class="panel"><table>
+<thead><tr><th>Piece</th><th>What it does</th><th>Real-world equivalent</th></tr></thead>
+<tbody>
+<tr><td>State machine</td><td>COOLING, IDLE, DEFROST, DOOR_OPEN, FAULT</td><td>Controller firmware</td></tr>
+<tr><td>Simulated sensors</td><td>Temperature drift, compressor cycles, heater, door events</td><td>Thermistor, relay, door switch</td></tr>
+<tr><td>MQTT</td><td>Telemetry out, commands in</td><td>Hub or cloud messaging</td></tr>
+<tr><td>REST API and web UI</td><td>Status and control on port 80</td><td>Local admin page</td></tr>
+<tr><td>Avahi and systemd</td><td>Shows up in scans, starts at boot</td><td>Discovery and init</td></tr>
+<tr><td>Weak settings (optional)</td><td>Open broker, default login</td><td>Insecure vendor defaults</td></tr>
+</tbody></table></div>
+<p><strong>Roadmap:</strong> 1 Network and base VM, 2 State machine and sensors, 3 Verify the simulation, 4 MQTT, 5 REST API and web UI, 6 systemd and mDNS, 7 Optional weak services. Raspberry Pi users follow the same tasks after the <a href="#pi">Pi setup</a>.</p>
+</section>
+
+<section id="network">
+<h2>Lab network</h2>
+<p>Give the VM two network adapters: <strong>NAT</strong> for updates while you build, and an <strong>isolated lab network</strong> for testing. Remove the NAT adapter when the build is finished.</p>
+<div class="panel"><table>
+<thead><tr><th>Hypervisor</th><th>Adapter 1 (build)</th><th>Adapter 2 (lab)</th></tr></thead>
+<tbody>
+<tr><td>VirtualBox</td><td>NAT</td><td>Host-only network, or Internal Network named <code>iotlab</code> for full isolation</td></tr>
+<tr><td>VMware</td><td>NAT (VMnet8)</td><td>Host-only (VMnet1)</td></tr>
+<tr><td>Proxmox</td><td>vmbr0</td><td>A new Linux bridge <code>vmbr1</code> with no ports and no gateway</td></tr>
+</tbody></table></div>
+<p>Add a second VM on the lab network as your tester (Kali Linux or Ubuntu with Nmap and Wireshark). Suggested addresses: fridge <code>192.168.56.10</code>, tester <code>192.168.56.20</code>. Host-only networks usually offer DHCP. Internal and Proxmox bridges do not, so set the address by hand (shown in Task 1).</p>
+</section>
+
+<section id="build">
+<h2>Build guide: virtual machine</h2>
+
+<h3>Task 1: Base VM</h3>
+<ul>
+<li>Ubuntu Server 24.04 LTS, 2 vCPU, 2 GB RAM, 20 GB disk</li>
+<li>Hostname <code>fridge-01</code>, and select <strong>Install OpenSSH server</strong> during install</li>
+</ul>
+<p>After first boot:</p>
+<pre><code>sudo apt update &amp;&amp; sudo apt full-upgrade -y
+sudo apt install -y python3-venv python3-pip mosquitto mosquitto-clients avahi-daemon avahi-utils vim
+hostnamectl
+systemctl status mosquitto --no-pager</code></pre>
+<p>Mosquitto should show <code>active (running)</code>. Find the lab adapter name with <code>ip -br a</code> (for example <code>enp0s8</code>). If it has no address, set one:</p>
+<div class="file">/etc/netplan/60-lab.yaml</div>
+<pre><code>network:
+  version: 2
+  ethernets:
+    enp0s8:
+      addresses: [192.168.56.10/24]</code></pre>
+<pre><code>sudo chmod 600 /etc/netplan/60-lab.yaml
+sudo netplan apply</code></pre>
+<p>Create the service account and Python environment:</p>
+<pre><code>sudo useradd --system --home /opt/fridge --shell /usr/sbin/nologin fridge
+sudo mkdir -p /opt/fridge &amp;&amp; sudo chown fridge:fridge /opt/fridge
+sudo -u fridge python3 -m venv /opt/fridge/venv
+sudo -u fridge /opt/fridge/venv/bin/pip install flask paho-mqtt</code></pre>
+<p>Take a snapshot named <code>base-clean</code>. Vim tip: before pasting, type <code>:set paste</code>, press <code>i</code>, paste, then <code>Esc</code> and <code>:wq</code>.</p>
+
+<h3>Task 2: State machine and simulated sensors</h3>
+<div class="file">sudo -u fridge vim /opt/fridge/fridge.py</div>
+<pre><code>import random, threading
+
+
+class Fridge:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state = "COOLING"
+        self.setpoint = 3.0
+        self.temp = 6.0
+        self.compressor = True
+        self.heater = False
+        self.door_open = False
+        self.door_left = 0
+        self.defrost_left = 0
+        self.since_defrost = 0
+        self.fault = None
+
+    def command(self, name, value=None):
+        with self.lock:
+            if name == "set_temp":
+                try:
+                    v = float(value)
+                except (TypeError, ValueError):
+                    return
+                if -5 &lt;= v &lt;= 10:
+                    self.setpoint = v
+            elif name == "start_defrost" and self.fault is None:
+                self.state, self.defrost_left = "DEFROST", 60
+            elif name == "open_door":
+                self.door_open, self.door_left = True, 15
+            elif name == "inject_fault":
+                self.fault = "SENSOR_FAIL"
+            elif name == "clear_fault":
+                self.fault = None
+                self.state = "IDLE"
+                self.temp = min(self.temp, 9.0)
+
+    def _doors(self):
+        if self.door_open:
+            self.door_left -= 1
+            self.door_open = self.door_left &gt; 0
+        elif random.random() &lt; 0.005:
+            self.door_open, self.door_left = True, random.randint(5, 20)
+
+    def tick(self):
+        """Advance the simulation by one second."""
+        with self.lock:
+            self._doors()
+            self.since_defrost += 1
+            if self.fault is None and self.state != "DEFROST":
+                if self.temp &gt; 10:
+                    self.fault = "HIGH_TEMP"
+                elif random.random() &lt; 0.0002:
+                    self.fault = "SENSOR_FAIL"
+            if self.fault:
+                self.state = "FAULT"
+                self.compressor = self.heater = False
+            elif self.state == "DEFROST":
+                self.compressor, self.heater = False, True
+                self.defrost_left -= 1
+                if self.defrost_left &lt;= 0:
+                    self.state, self.heater = "COOLING", False
+                    self.since_defrost = 0
+            elif self.since_defrost &gt; 1800:
+                self.state, self.defrost_left = "DEFROST", 60
+            else:
+                if self.temp &gt; self.setpoint + 1:
+                    self.compressor = True
+                elif self.temp &lt; self.setpoint - 1:
+                    self.compressor = False
+                self.heater = False
+                if self.door_open:
+                    self.state = "DOOR_OPEN"
+                else:
+                    self.state = "COOLING" if self.compressor else "IDLE"
+            delta = 0.01 + random.uniform(-0.01, 0.01)
+            if self.compressor:
+                delta -= 0.06
+            if self.heater:
+                delta += 0.04
+            if self.door_open:
+                delta += 0.08
+            self.temp += delta
+
+    def snapshot(self):
+        with self.lock:
+            return {
+                "device": "fridge-01",
+                "state": self.state,
+                "temp_c": round(self.temp, 2),
+                "setpoint_c": self.setpoint,
+                "door_open": self.door_open,
+                "compressor": self.compressor,
+                "defrost_heater": self.heater,
+                "defrost_left_s": self.defrost_left,
+                "fault": self.fault,
+            }</code></pre>
+<p>Tuning: change the numbers in <code>tick()</code> to make the cabinet warm faster, defrost more often (<code>1800</code> seconds), or fault more often (<code>0.0002</code>).</p>
+
+<h3>Task 3: Verify the simulation</h3>
+<div class="file">sudo -u fridge vim /opt/fridge/test_sim.py</div>
+<pre><code>from fridge import Fridge
+
+f = Fridge()
+for i in range(300):
+    f.tick()
+    if i % 30 == 0:
+        s = f.snapshot()
+        print(i, s["state"], s["temp_c"], s["compressor"])
+f.command("start_defrost")
+for i in range(70):
+    f.tick()
+    if i % 10 == 0:
+        s = f.snapshot()
+        print("defrost", i, s["state"], s["temp_c"], s["defrost_heater"])</code></pre>
+<pre><code>cd /opt/fridge &amp;&amp; sudo -u fridge venv/bin/python3 test_sim.py</code></pre>
+<p>Expected: temperature falls toward 3 &deg;C and cycles between COOLING and IDLE. During defrost the state is DEFROST with the heater on and temperature rising, then it returns to COOLING after 60 ticks.</p>
+
+<h3>Task 4: MQTT telemetry and remote commands</h3>
+<p>Allow lab connections to the broker (open on purpose for now, secured in the protection section):</p>
+<div class="file">sudo vim /etc/mosquitto/conf.d/lab.conf</div>
+<pre><code>listener 1883
+allow_anonymous true</code></pre>
+<pre><code>sudo systemctl restart mosquitto</code></pre>
+<div class="file">sudo -u fridge vim /opt/fridge/mqtt_bridge.py</div>
+<pre><code>import json, os, threading, time
+import paho.mqtt.client as mqtt
+
+ID = "fridge-01"
+HOST = os.getenv("MQTT_HOST", "localhost")
+PORT = int(os.getenv("MQTT_PORT", "1883"))
+USER = os.getenv("MQTT_USER")
+PASS = os.getenv("MQTT_PASS")
+
+
+def start(fridge):
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=ID)
+    if USER:
+        c.username_pw_set(USER, PASS)
+    c.will_set(ID + "/status", "offline", retain=True)
+
+    def on_connect(client, userdata, flags, rc, props):
+        client.subscribe(ID + "/cmd/#")
+        client.publish(ID + "/status", "online", retain=True)
+
+    def on_message(client, userdata, msg):
+        name = msg.topic.rsplit("/", 1)[-1]
+        fridge.command(name, msg.payload.decode() or None)
+
+    c.on_connect = on_connect
+    c.on_message = on_message
+    c.connect_async(HOST, PORT)
+    c.loop_start()
+
+    def publish():
+        while True:
+            c.publish(ID + "/telemetry", json.dumps(fridge.snapshot()))
+            time.sleep(5)
+
+    threading.Thread(target=publish, daemon=True).start()</code></pre>
+
+<h3>Task 5: REST API and web UI</h3>
+<div class="file">sudo -u fridge vim /opt/fridge/web.py</div>
+<pre><code>import os
+from flask import Flask, jsonify, request, abort
+
+PAGE = """&lt;h1&gt;fridge-01&lt;/h1&gt;&lt;pre id=s&gt;&lt;/pre&gt;
+&lt;label&gt;API key (only needed if configured): &lt;input id=api-key type=password autocomplete=off&gt;&lt;/label&gt;
+&lt;button onclick="c('start_defrost')"&gt;Start defrost&lt;/button&gt;
+&lt;button onclick="c('open_door')"&gt;Open door&lt;/button&gt;
+&lt;button onclick="c('set_temp',prompt('Setpoint C','3'))"&gt;Set temp&lt;/button&gt;
+&lt;script&gt;
+const stateEl=document.getElementById('s');
+async function r(){stateEl.textContent=JSON.stringify(await(await fetch('/api/status')).json(),null,2)}
+async function c(n,v){const headers={'Content-Type':'application/json'};const key=document.getElementById('api-key').value;if(key)headers['X-API-Key']=key;const response=await fetch('/api/command/'+n,{method:'POST',headers,body:JSON.stringify({value:v})});if(response.status===401){alert('Unauthorized: enter the configured API key.');return}r()}
+r();setInterval(r,2000)
+&lt;/script&gt;"""
+
+
+def create(fridge):
+    app = Flask(__name__)
+    key = os.getenv("FRIDGE_API_KEY")
+
+    @app.get("/")
+    def index():
+        return PAGE
+
+    @app.get("/api/status")
+    def status():
+        return jsonify(fridge.snapshot())
+
+    @app.post("/api/command/&lt;name&gt;")
+    def command(name):
+        if key and request.headers.get("X-API-Key") != key:
+            abort(401)
+        body = request.get_json(silent=True) or {}
+        fridge.command(name, body.get("value"))
+        return jsonify(fridge.snapshot())
+
+    return app</code></pre>
+<div class="file">sudo -u fridge vim /opt/fridge/main.py</div>
+<pre><code>import threading, time
+from fridge import Fridge
+import mqtt_bridge, web
+
+fridge = Fridge()
+
+
+def loop():
+    while True:
+        fridge.tick()
+        time.sleep(1)
+
+
+threading.Thread(target=loop, daemon=True).start()
+mqtt_bridge.start(fridge)
+web.create(fridge).run(host="0.0.0.0", port=80)</code></pre>
+<p>Port 80 needs extra permission, so for a quick manual test run it once as root, then press Ctrl+C. Task 6 gives it a proper setup.</p>
+<pre><code>sudo /opt/fridge/venv/bin/python3 /opt/fridge/main.py</code></pre>
+<p>From a second terminal (or the tester VM) check each path:</p>
+<pre><code>curl http://192.168.56.10/api/status
+curl -X POST -H 'Content-Type: application/json' -d '{"value":"4"}' http://192.168.56.10/api/command/set_temp
+mosquitto_sub -h 192.168.56.10 -t 'fridge-01/#' -v
+mosquitto_pub -h 192.168.56.10 -t fridge-01/cmd/start_defrost -n
+mosquitto_pub -h 192.168.56.10 -t fridge-01/cmd/set_temp -m 5</code></pre>
+<p>You should see telemetry every 5 seconds and the state switch to DEFROST after the command. Open <code>http://192.168.56.10/</code> in a browser for the control page.</p>
+
+<h3>Task 6: systemd service and mDNS</h3>
+<div class="file">sudo vim /etc/systemd/system/fridge.service</div>
+<pre><code>[Unit]
+Description=Simulated refrigerator (fridge-01)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+User=fridge
+WorkingDirectory=/opt/fridge
+EnvironmentFile=-/etc/default/fridge
+ExecStart=/opt/fridge/venv/bin/python3 /opt/fridge/main.py
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<div class="file">sudo vim /etc/avahi/services/fridge.service</div>
+<pre><code>&lt;?xml version="1.0" standalone='no'?&gt;
+&lt;!DOCTYPE service-group SYSTEM "avahi-service.dtd"&gt;
+&lt;service-group&gt;
+  &lt;name replace-wildcards="yes"&gt;Fridge %h&lt;/name&gt;
+  &lt;service&gt;&lt;type&gt;_http._tcp&lt;/type&gt;&lt;port&gt;80&lt;/port&gt;&lt;txt-record&gt;model=CoolBox-X1&lt;/txt-record&gt;&lt;/service&gt;
+  &lt;service&gt;&lt;type&gt;_mqtt._tcp&lt;/type&gt;&lt;port&gt;1883&lt;/port&gt;&lt;/service&gt;
+&lt;/service-group&gt;</code></pre>
+<pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now fridge avahi-daemon
+sudo systemctl restart avahi-daemon
+systemctl status fridge --no-pager
+sudo reboot</code></pre>
+<p>After the reboot, from the tester VM run <code>avahi-browse -art</code> and <code>ping fridge-01.local</code>. The device should appear and the service should be running without any manual start. Take a snapshot named <code>fridge-working</code>.</p>
+
+<h3>Task 7 (optional): Weak settings to practice on</h3>
+<p>Only on the isolated lab network. These recreate common real-world mistakes:</p>
+<ul>
+<li>Open MQTT broker and unauthenticated web API (already the case from Tasks 4 and 5).</li>
+<li>Password SSH login with a default-style account:</li>
+</ul>
+<pre><code>sudo useradd -m -s /bin/bash admin
+echo 'admin:admin' | sudo chpasswd
+sudo vim /etc/ssh/sshd_config.d/99-lab.conf   # add: PasswordAuthentication yes
+sudo systemctl restart ssh</code></pre>
+<p>Snapshot as <code>fridge-weak</code>, scan and attack it from the tester VM, then restore or harden it using the next section.</p>
+</section>
+
+<section id="pi">
+<h2>Option: build it on a Raspberry Pi</h2>
+<p>A Pi gives you a real physical device on a real network, which is useful for practicing with switches, VLANs, and router rules. The software is the same.</p>
+<div class="panel"><table>
+<thead><tr><th>Step</th><th>On a Raspberry Pi</th></tr></thead>
+<tbody>
+<tr><td>Hardware</td><td>Raspberry Pi 4 or 5 (3B+ also works), 16 GB or larger microSD, power supply, Ethernet cable</td></tr>
+<tr><td>Install OS</td><td>Raspberry Pi Imager, choose Raspberry Pi OS Lite (64-bit). In the settings set hostname <code>fridge-01</code>, create a user, and enable SSH</td></tr>
+<tr><td>Network</td><td>Plug into an isolated switch or a VLAN or guest network. Use Ethernet for the lab, not your main Wi-Fi</td></tr>
+<tr><td>Tasks 1 to 7</td><td>Follow the VM tasks unchanged. Skip the hypervisor and netplan steps; the Pi gets its address from DHCP on its network. Check it with <code>ip -br a</code></td></tr>
+<tr><td>Snapshots</td><td>Pis have none. Back up the finished card with Imager or <code>dd</code> from another computer so you can restore after experiments</td></tr>
+</tbody></table></div>
+<p><strong>Optional real hardware:</strong> wire an LED to a GPIO pin to show the compressor, another for the defrost heater, and a push button for the door switch. A DS18B20 temperature probe can replace the simulated temperature. Use the <code>gpiozero</code> library and call <code>fridge.command("open_door")</code> from a button handler.</p>
+</section>
+
+<section id="use">
+<h2>Using it: quick reference</h2>
+<div class="panel"><table>
+<thead><tr><th>Interface</th><th>Address</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Web UI</td><td><code>http://fridge-01.local/</code></td><td>View and control</td></tr>
+<tr><td>REST status</td><td><code>GET /api/status</code></td><td>JSON state</td></tr>
+<tr><td>REST command</td><td><code>POST /api/command/&lt;name&gt;</code></td><td>set_temp, start_defrost, open_door, inject_fault, clear_fault</td></tr>
+<tr><td>MQTT telemetry</td><td><code>fridge-01/telemetry</code></td><td>JSON every 5 seconds</td></tr>
+<tr><td>MQTT commands</td><td><code>fridge-01/cmd/&lt;name&gt;</code></td><td>Payload is the value, if needed</td></tr>
+<tr><td>MQTT status</td><td><code>fridge-01/status</code></td><td>online or offline (last will)</td></tr>
+</tbody></table></div>
+<p><strong>Practice ideas:</strong> scan the device with <code>nmap -sV</code> and list every open port; capture MQTT traffic in Wireshark; send an unauthorized defrost command; log in with the default account; inject a fault and diagnose it from telemetry; connect it to Home Assistant; then harden it and repeat each test.</p>
+</section>
+
+<section id="protect">
+<h2>How to better protect IoT devices</h2>
+<p>These steps apply to your lab device and to any smart device you own or manage. Walk through them on fridge-01 to see each one working.</p>
+<details open><summary>1. Change default credentials</summary><p>Default logins are published online and are the most common way devices are taken over. Use a unique, long password per device, kept in a password manager. On the lab: <code>sudo passwd -l admin</code> or delete the account.</p></details>
+<details open><summary>2. Isolate IoT on its own network</summary><p>Use a separate VLAN or guest network and block IoT-to-LAN traffic by default, allowing only what the device needs.</p></details>
+<details><summary>3. Secure the MQTT broker (hands-on)</summary>
+<pre><code>sudo mosquitto_passwd -c /etc/mosquitto/passwd fridge
+sudo mosquitto_passwd /etc/mosquitto/passwd operator</code></pre>
+<div class="file">sudo vim /etc/mosquitto/acl</div>
+<pre><code>user fridge
+topic readwrite fridge-01/#
+
+user operator
+topic read fridge-01/telemetry
+topic write fridge-01/cmd/#</code></pre>
+<p>Replace <code>/etc/mosquitto/conf.d/lab.conf</code> with:</p>
+<pre><code>listener 1883
+allow_anonymous false
+password_file /etc/mosquitto/passwd
+acl_file /etc/mosquitto/acl</code></pre>
+<p>Give the device its login in <code>/etc/default/fridge</code> (protect it with <code>sudo chmod 600</code> and <code>sudo chown root:root</code>), then restart both services:</p>
+<pre><code>MQTT_USER=fridge
+MQTT_PASS=your-long-password
+FRIDGE_API_KEY=another-long-secret</code></pre>
+<pre><code>sudo systemctl restart mosquitto fridge</code></pre>
+<p>Now anonymous publishing fails, the operator cannot read anything beyond telemetry, and web commands need the header <code>X-API-Key</code>.</p></details>
+<details><summary>4. Encrypt with TLS (hands-on)</summary>
+<pre><code>sudo mkdir -p /etc/mosquitto/certs
+sudo openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=fridge-01" \
+  -keyout /etc/mosquitto/certs/fridge.key -out /etc/mosquitto/certs/fridge.crt
+sudo chown mosquitto /etc/mosquitto/certs/fridge.key
+sudo chmod 600 /etc/mosquitto/certs/fridge.key</code></pre>
+<p>Add to the Mosquitto config, then restart:</p>
+<pre><code>listener 8883
+certfile /etc/mosquitto/certs/fridge.crt
+keyfile /etc/mosquitto/certs/fridge.key</code></pre>
+<p>Capture traffic in Wireshark before and after to see the difference between port 1883 and 8883. Remove the plain 1883 listener once clients use TLS.</p></details>
+<details><summary>5. Turn off services you do not use</summary><p>Disable password SSH (use key-based login), remove telnet, UPnP, and WPS, and close any port you do not need. Re-run <code>nmap -sV fridge-01</code> and confirm the list got shorter.</p></details>
+<details><summary>6. Never forward ports to a device</summary><p>Do not expose appliance interfaces to the internet. Use a VPN into your network, or the vendor's cloud with multi-factor authentication.</p></details>
+<details><summary>7. Keep firmware and software updated</summary><p>Check for updates on a schedule, and replace devices that no longer receive security patches. Prefer vendors with a published update policy.</p></details>
+<details><summary>8. Least privilege</summary><p>The service already runs as a dedicated account with systemd restrictions. Verify with <code>systemd-analyze security fridge</code> and tighten further.</p></details>
+<details><summary>9. Monitor, log, and keep an inventory</summary><p>List every connected device, what it talks to, and who owns it. Watch for unusual traffic, such as a refrigerator contacting unknown hosts.</p></details>
+<details><summary>10. Limit data and features</summary><p>Turn off cameras, microphones, and cloud features you do not need, and review what data the device sends and where.</p></details>
+</section>
+
+<section id="fix">
+<h2>Troubleshooting</h2>
+<div class="panel"><table>
+<thead><tr><th>Problem</th><th>Check</th></tr></thead>
+<tbody>
+<tr><td>Service will not start</td><td><code>journalctl -u fridge -n 50 --no-pager</code></td></tr>
+<tr><td>Port 80 permission denied</td><td>Confirm <code>AmbientCapabilities=CAP_NET_BIND_SERVICE</code> is in the unit file and run <code>sudo systemctl daemon-reload</code></td></tr>
+<tr><td>No MQTT messages</td><td><code>systemctl status mosquitto</code>, confirm <code>lab.conf</code> exists, and test locally with <code>mosquitto_sub -t '#' -v</code></td></tr>
+<tr><td>Cannot reach from tester VM</td><td>Both on the same lab network? Check <code>ip -br a</code> on each and <code>ping 192.168.56.10</code></td></tr>
+<tr><td>Name <code>.local</code> not found</td><td><code>systemctl status avahi-daemon</code>, and make sure the tester resolves mDNS</td></tr>
+<tr><td>Stuck in FAULT</td><td>Send <code>clear_fault</code> by REST or MQTT</td></tr>
+<tr><td>Module not found</td><td>Run the service with <code>/opt/fridge/venv/bin/python3</code>, not the system Python</td></tr>
+</tbody></table></div>
+</section>
+
+</main>
+<footer><div class="wrap"><p>Provided for education and authorized testing. Use it only on systems you own or have explicit permission to test, and follow the laws that apply where you live.</p></div></footer>
+</body>
+</html>
