@@ -22,7 +22,8 @@ header p{color:#b9d0d9;font-size:1.1rem}
 nav{background:var(--surface);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 nav .wrap{display:flex;gap:20px;overflow-x:auto;padding-top:12px;padding-bottom:12px}
 nav a{white-space:nowrap;text-decoration:none;color:var(--ink);font-weight:600;font-size:.95rem}
-section{padding:42px 0 6px}
+section{padding:42px 0 6px;scroll-margin-top:56px}
+.unsure{border-left:6px solid var(--accent);background:var(--surface);padding:12px 16px;margin:0 0 16px;border-radius:4px;font-size:.95rem}
 .notice{background:var(--warn-bg);border-left:6px solid var(--warn-line);color:var(--warn-ink);padding:18px 20px;margin:20px 0;border-radius:4px}
 .notice strong{display:block;font-size:1.1rem;margin-bottom:6px}
 .notice ul{margin:8px 0 0;padding-left:20px}
@@ -50,13 +51,13 @@ ul,ol{padding-left:22px}
 <p>A complete guide to a realistic fake appliance with temperature sensing, defrost mode, MQTT, a web interface, and remote control. Built for testing, troubleshooting, and learning to protect real IoT devices.</p>
 </div></header>
 <nav aria-label="Sections"><div class="wrap">
-<a href="#purpose">Purpose</a><a href="#overview">Overview</a><a href="#network">Lab network</a><a href="#build">Build (VM)</a><a href="#pi">Raspberry Pi</a><a href="#use">Using it</a><a href="#protect">Protection</a><a href="#fix">Troubleshooting</a>
+<a href="#purpose">Purpose</a><a href="#overview">Overview</a><a href="#network">Lab network</a><a href="#build">Build (VM)</a><a href="#pi">Raspberry Pi</a><a href="#use">Using it</a><a href="#weaknesses">Weaknesses</a><a href="#protect">Protection</a><a href="#fix">Troubleshooting</a><a href="#known">Known issues</a>
 </div></nav>
 <main class="wrap">
 
 <section id="purpose">
 <h2>Purpose and ground rules</h2>
-<p>This project creates a harmless lab device that reports temperature, runs a defrost cycle, and accepts remote commands, the way a store display cooler or smart refrigerator does. Use it to learn how IoT devices communicate, practice troubleshooting, and see how attackers find weak ones.</p>
+<p>This project creates an intentionally insecure lab device that reports temperature, runs a defrost cycle, and accepts remote commands, the way a poorly built store display cooler or smart refrigerator does. It is meant for security testers, IT staff, students, and anyone learning to troubleshoot or defend IoT devices. Use it to learn how IoT devices communicate, practice troubleshooting, and see how attackers find weak ones.</p>
 <div class="notice" role="note"><strong>For testing and education only</strong>
 <ul>
 <li>Run it only in a lab you own, on an isolated network.</li>
@@ -91,7 +92,7 @@ ul,ol{padding-left:22px}
 <tr><td>VMware</td><td>NAT (VMnet8)</td><td>Host-only (VMnet1)</td></tr>
 <tr><td>Proxmox</td><td>vmbr0</td><td>A new Linux bridge <code>vmbr1</code> with no ports and no gateway</td></tr>
 </tbody></table></div>
-<p>Add a second VM on the lab network as your tester (Kali Linux or Ubuntu with Nmap and Wireshark). Suggested addresses: fridge <code>192.168.56.10</code>, tester <code>192.168.56.20</code>. Host-only networks usually offer DHCP. Internal and Proxmox bridges do not, so set the address by hand (shown in Task 1).</p>
+<p>Add a second VM on the lab network as your tester (Kali Linux or Ubuntu with Nmap and Wireshark). Suggested addresses: fridge <code>192.168.56.10</code>, tester <code>192.168.56.20</code>. Every <code>192.168.56.x</code> address in this guide is VirtualBox's default host-only range; substitute your own lab subnet if your hypervisor uses a different one. Host-only networks usually offer DHCP. Internal and Proxmox bridges do not, so set the address by hand (shown in Task 1).</p>
 </section>
 
 <section id="build">
@@ -99,7 +100,7 @@ ul,ol{padding-left:22px}
 
 <h3>Task 1: Base VM</h3>
 <ul>
-<li>Ubuntu Server 24.04 LTS, 2 vCPU, 2 GB RAM, 20 GB disk</li>
+<li>Ubuntu Server 24.04 LTS (written for 24.04; newer LTS releases should work but package versions may differ), 2 vCPU, 2 GB RAM, 20 GB disk</li>
 <li>Hostname <code>fridge-01</code>, and select <strong>Install OpenSSH server</strong> during install</li>
 </ul>
 <p>After first boot:</p>
@@ -120,7 +121,7 @@ sudo netplan apply</code></pre>
 <pre><code>sudo useradd --system --home /opt/fridge --shell /usr/sbin/nologin fridge
 sudo mkdir -p /opt/fridge &amp;&amp; sudo chown fridge:fridge /opt/fridge
 sudo -u fridge python3 -m venv /opt/fridge/venv
-sudo -u fridge /opt/fridge/venv/bin/pip install flask paho-mqtt</code></pre>
+sudo -u fridge /opt/fridge/venv/bin/pip install flask "paho-mqtt>=2.0"</code></pre>
 <p>Take a snapshot named <code>base-clean</code>. Vim tip: before pasting, type <code>:set paste</code>, press <code>i</code>, paste, then <code>Esc</code> and <code>:wq</code>.</p>
 
 <h3>Task 2: State machine and simulated sensors</h3>
@@ -156,7 +157,8 @@ class Fridge:
             elif name == "open_door":
                 self.door_open, self.door_left = True, 15
             elif name == "inject_fault":
-                self.fault = "SENSOR_FAIL"
+                ok = ("SENSOR_FAIL", "COMPRESSOR_FAIL", "HIGH_TEMP")
+                self.fault = value if value in ok else "SENSOR_FAIL"
             elif name == "clear_fault":
                 self.fault = None
                 self.state = "IDLE"
@@ -241,7 +243,7 @@ for i in range(70):
         s = f.snapshot()
         print("defrost", i, s["state"], s["temp_c"], s["defrost_heater"])</code></pre>
 <pre><code>cd /opt/fridge &amp;&amp; sudo -u fridge venv/bin/python3 test_sim.py</code></pre>
-<p>Expected: temperature falls toward 3 &deg;C and cycles between COOLING and IDLE. During defrost the state is DEFROST with the heater on and temperature rising, then it returns to COOLING after 60 ticks.</p>
+<p>Expected: temperature falls toward 3 &deg;C and cycles between COOLING and IDLE. During defrost the state is DEFROST with the heater on and temperature rising, then it returns to COOLING after 60 ticks. The simulator has a small random chance of a fault (roughly 7% across this test). If you see FAULT, just run the script again.</p>
 
 <h3>Task 4: MQTT telemetry and remote commands</h3>
 <p>Allow lab connections to the broker (open on purpose for now, secured in the protection section):</p>
@@ -258,12 +260,15 @@ HOST = os.getenv("MQTT_HOST", "localhost")
 PORT = int(os.getenv("MQTT_PORT", "1883"))
 USER = os.getenv("MQTT_USER")
 PASS = os.getenv("MQTT_PASS")
+CA = os.getenv("MQTT_CA")  # path to a certificate file; set it to enable TLS
 
 
 def start(fridge):
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=ID)
     if USER:
         c.username_pw_set(USER, PASS)
+    if CA:
+        c.tls_set(ca_certs=CA)
     c.will_set(ID + "/status", "offline", retain=True)
 
     def on_connect(client, userdata, flags, rc, props):
@@ -272,7 +277,7 @@ def start(fridge):
 
     def on_message(client, userdata, msg):
         name = msg.topic.rsplit("/", 1)[-1]
-        fridge.command(name, msg.payload.decode() or None)
+        fridge.command(name, msg.payload.decode(errors="ignore") or None)
 
     c.on_connect = on_connect
     c.on_message = on_message
@@ -286,20 +291,20 @@ def start(fridge):
 
     threading.Thread(target=publish, daemon=True).start()</code></pre>
 
+<p>Task 4 has no test of its own, because the bridge is started by <code>main.py</code> in Task 5. The MQTT checks are in Task 5.</p>
+
 <h3>Task 5: REST API and web UI</h3>
 <div class="file">sudo -u fridge vim /opt/fridge/web.py</div>
 <pre><code>import os
 from flask import Flask, jsonify, request, abort
 
 PAGE = """&lt;h1&gt;fridge-01&lt;/h1&gt;&lt;pre id=s&gt;&lt;/pre&gt;
-&lt;label&gt;API key (only needed if configured): &lt;input id=api-key type=password autocomplete=off&gt;&lt;/label&gt;
 &lt;button onclick="c('start_defrost')"&gt;Start defrost&lt;/button&gt;
 &lt;button onclick="c('open_door')"&gt;Open door&lt;/button&gt;
 &lt;button onclick="c('set_temp',prompt('Setpoint C','3'))"&gt;Set temp&lt;/button&gt;
 &lt;script&gt;
-const stateEl=document.getElementById('s');
-async function r(){stateEl.textContent=JSON.stringify(await(await fetch('/api/status')).json(),null,2)}
-async function c(n,v){const headers={'Content-Type':'application/json'};const key=document.getElementById('api-key').value;if(key)headers['X-API-Key']=key;const response=await fetch('/api/command/'+n,{method:'POST',headers,body:JSON.stringify({value:v})});if(response.status===401){alert('Unauthorized: enter the configured API key.');return}r()}
+async function r(){s.textContent=JSON.stringify(await(await fetch('/api/status')).json(),null,2)}
+let k='';async function c(n,v){let x=await fetch('/api/command/'+n,{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':k},body:JSON.stringify({value:v})});if(x.status==401){k=prompt('API key')||''}r()}
 r();setInterval(r,2000)
 &lt;/script&gt;"""
 
@@ -390,15 +395,17 @@ sudo reboot</code></pre>
 <p>After the reboot, from the tester VM run <code>avahi-browse -art</code> and <code>ping fridge-01.local</code>. The device should appear and the service should be running without any manual start. Take a snapshot named <code>fridge-working</code>.</p>
 
 <h3>Task 7 (optional): Weak settings to practice on</h3>
-<p>Only on the isolated lab network. These recreate common real-world mistakes:</p>
+<p>Only on the isolated lab network. Remove the NAT adapter first so the weak login cannot be reached from outside. These recreate common real-world mistakes:</p>
+<p class="unsure"><strong>Unverified:</strong> SSH uses the first value it reads for a setting, so the drop-in file is named <code>00-lab.conf</code> to win over other files. Confirm the result with the <code>sshd -T</code> check below.</p>
 <ul>
 <li>Open MQTT broker and unauthenticated web API (already the case from Tasks 4 and 5).</li>
 <li>Password SSH login with a default-style account:</li>
 </ul>
 <pre><code>sudo useradd -m -s /bin/bash admin
 echo 'admin:admin' | sudo chpasswd
-sudo vim /etc/ssh/sshd_config.d/99-lab.conf   # add: PasswordAuthentication yes
-sudo systemctl restart ssh</code></pre>
+sudo vim /etc/ssh/sshd_config.d/00-lab.conf   # add: PasswordAuthentication yes
+sudo systemctl restart ssh
+sudo sshd -T | grep -i passwordauthentication   # should print: yes</code></pre>
 <p>Snapshot as <code>fridge-weak</code>, scan and attack it from the tester VM, then restore or harden it using the next section.</p>
 </section>
 
@@ -410,11 +417,12 @@ sudo systemctl restart ssh</code></pre>
 <tbody>
 <tr><td>Hardware</td><td>Raspberry Pi 4 or 5 (3B+ also works), 16 GB or larger microSD, power supply, Ethernet cable</td></tr>
 <tr><td>Install OS</td><td>Raspberry Pi Imager, choose Raspberry Pi OS Lite (64-bit). In the settings set hostname <code>fridge-01</code>, create a user, and enable SSH</td></tr>
-<tr><td>Network</td><td>Plug into an isolated switch or a VLAN or guest network. Use Ethernet for the lab, not your main Wi-Fi</td></tr>
+<tr><td>Network</td><td>Install and update packages first on a normal network (the build needs internet), then move the Pi to an isolated switch or a VLAN or guest network. Use Ethernet for the lab, not your main Wi-Fi</td></tr>
 <tr><td>Tasks 1 to 7</td><td>Follow the VM tasks unchanged. Skip the hypervisor and netplan steps; the Pi gets its address from DHCP on its network. Check it with <code>ip -br a</code></td></tr>
 <tr><td>Snapshots</td><td>Pis have none. Back up the finished card with Imager or <code>dd</code> from another computer so you can restore after experiments</td></tr>
 </tbody></table></div>
 <p><strong>Optional real hardware:</strong> wire an LED to a GPIO pin to show the compressor, another for the defrost heater, and a push button for the door switch. A DS18B20 temperature probe can replace the simulated temperature. Use the <code>gpiozero</code> library and call <code>fridge.command("open_door")</code> from a button handler.</p>
+<p class="unsure"><strong>Unverified:</strong> the GPIO and sensor wiring is only outlined. The DS18B20 needs the 1-Wire interface enabled in the Pi configuration, and no tested code is provided here. The software-only Pi build follows the VM tasks.</p>
 </section>
 
 <section id="use">
@@ -432,9 +440,33 @@ sudo systemctl restart ssh</code></pre>
 <p><strong>Practice ideas:</strong> scan the device with <code>nmap -sV</code> and list every open port; capture MQTT traffic in Wireshark; send an unauthorized defrost command; log in with the default account; inject a fault and diagnose it from telemetry; connect it to Home Assistant; then harden it and repeat each test.</p>
 </section>
 
+<section id="weaknesses">
+<h2>Intentional weaknesses (for testers)</h2>
+<p>Fridge-01 is meant to be a bad smart refrigerator. These flaws are built in on purpose, so you can tell a feature from a bug. Each one can be fixed with the protection steps in the next section.</p>
+<div class="panel"><table>
+<thead><tr><th>Weakness</th><th>Where</th><th>Try</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>No authentication on web UI and API</td><td>Task 5</td><td><code>curl -X POST http://IP/api/command/start_defrost</code></td><td>API key (step 3)</td></tr>
+<tr><td>Anonymous plaintext MQTT</td><td>Task 4</td><td>Subscribe to <code>#</code>, publish commands, capture in Wireshark</td><td>Passwords, ACLs, TLS (steps 3 and 4)</td></tr>
+<tr><td>Debug commands exposed</td><td>fridge.py</td><td><code>inject_fault</code>, <code>clear_fault</code>, <code>open_door</code></td><td>Remove them or restrict by ACL</td></tr>
+<tr><td>Retained messages can replay commands</td><td>Broker</td><td>Publish a command with <code>-r</code>, then restart the device</td><td>Deny retained writes, monitor topics</td></tr>
+<tr><td>No CSRF protection</td><td>Web API</td><td>Submit a form-encoded POST to <code>start_defrost</code> from a page in a lab browser</td><td>Require the key, check the Origin header</td></tr>
+<tr><td>Default credentials</td><td>Task 7</td><td>SSH as <code>admin</code> with password <code>admin</code></td><td>Disable password login</td></tr>
+<tr><td>Information disclosure</td><td>HTTP headers, mDNS, telemetry</td><td><code>nmap -sV</code>, <code>avahi-browse -art</code></td><td>Remove banners and model text</td></tr>
+<tr><td>No rate limiting or lockout</td><td>All services</td><td>Brute-force the login or flood commands</td><td>Rate limiting, fail2ban</td></tr>
+</tbody></table></div>
+<h3>Rules for testers</h3>
+<ul>
+<li>Snapshot before each test and restore afterward.</li>
+<li>Keep the lab isolated, and never reuse real passwords on it.</li>
+<li>Record each finding as: what you did, the evidence, and the fix.</li>
+<li>Apply these techniques to real systems only with written authorization.</li>
+</ul>
+</section>
+
 <section id="protect">
 <h2>How to better protect IoT devices</h2>
-<p>These steps apply to your lab device and to any smart device you own or manage. Walk through them on fridge-01 to see each one working.</p>
+<p>This is the fix list for the weaknesses above, and it applies to any smart device you own or manage. Walk through it on fridge-01 to see each one working.</p>
 <details open><summary>1. Change default credentials</summary><p>Default logins are published online and are the most common way devices are taken over. Use a unique, long password per device, kept in a password manager. On the lab: <code>sudo passwd -l admin</code> or delete the account.</p></details>
 <details open><summary>2. Isolate IoT on its own network</summary><p>Use a separate VLAN or guest network and block IoT-to-LAN traffic by default, allowing only what the device needs.</p></details>
 <details><summary>3. Secure the MQTT broker (hands-on)</summary>
@@ -447,28 +479,41 @@ topic readwrite fridge-01/#
 user operator
 topic read fridge-01/telemetry
 topic write fridge-01/cmd/#</code></pre>
+<pre><code>sudo chown mosquitto:mosquitto /etc/mosquitto/passwd /etc/mosquitto/acl
+sudo chmod 640 /etc/mosquitto/passwd /etc/mosquitto/acl</code></pre>
 <p>Replace <code>/etc/mosquitto/conf.d/lab.conf</code> with:</p>
 <pre><code>listener 1883
 allow_anonymous false
 password_file /etc/mosquitto/passwd
 acl_file /etc/mosquitto/acl</code></pre>
-<p>Give the device its login in <code>/etc/default/fridge</code> (protect it with <code>sudo chmod 600</code> and <code>sudo chown root:root</code>), then restart both services:</p>
+<p>Create <code>/etc/default/fridge</code> with <code>sudo vim</code> using the lines below (replace the placeholders with your own long values). The device user <code>fridge</code> must use the same password you set in the broker. Then lock the file down and restart both services:</p>
+<pre><code>sudo chown root:root /etc/default/fridge &amp;&amp; sudo chmod 600 /etc/default/fridge</code></pre>
 <pre><code>MQTT_USER=fridge
 MQTT_PASS=your-long-password
 FRIDGE_API_KEY=another-long-secret</code></pre>
 <pre><code>sudo systemctl restart mosquitto fridge</code></pre>
-<p>Now anonymous publishing fails, the operator cannot read anything beyond telemetry, and web commands need the header <code>X-API-Key</code>.</p></details>
+<p>Now anonymous publishing fails, the operator cannot read anything beyond telemetry, and web commands need the header <code>X-API-Key</code>. Your earlier test commands now need credentials:</p>
+<pre><code>mosquitto_sub -h 192.168.56.10 -u operator -P 'yourpass' -t 'fridge-01/telemetry' -v
+curl -X POST -H 'X-API-Key: your-key' -H 'Content-Type: application/json' -d '{"value":"4"}' http://192.168.56.10/api/command/set_temp</code></pre>
+<p>The web page asks for the key the first time a command is rejected, then click the button again.</p></details>
 <details><summary>4. Encrypt with TLS (hands-on)</summary>
 <pre><code>sudo mkdir -p /etc/mosquitto/certs
 sudo openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=fridge-01" \
+  -addext "subjectAltName=DNS:fridge-01,DNS:localhost,IP:127.0.0.1,IP:192.168.56.10" \
   -keyout /etc/mosquitto/certs/fridge.key -out /etc/mosquitto/certs/fridge.crt
 sudo chown mosquitto /etc/mosquitto/certs/fridge.key
-sudo chmod 600 /etc/mosquitto/certs/fridge.key</code></pre>
+sudo chmod 600 /etc/mosquitto/certs/fridge.key
+sudo chmod 644 /etc/mosquitto/certs/fridge.crt</code></pre>
 <p>Add to the Mosquitto config, then restart:</p>
 <pre><code>listener 8883
 certfile /etc/mosquitto/certs/fridge.crt
 keyfile /etc/mosquitto/certs/fridge.key</code></pre>
-<p>Capture traffic in Wireshark before and after to see the difference between port 1883 and 8883. Remove the plain 1883 listener once clients use TLS.</p></details>
+<p>Point the device at TLS by adding these lines to <code>/etc/default/fridge</code>, then restart it:</p>
+<pre><code>MQTT_HOST=localhost
+MQTT_PORT=8883
+MQTT_CA=/etc/mosquitto/certs/fridge.crt</code></pre>
+<p>Capture traffic in Wireshark before and after to see the difference between port 1883 and 8883. Remove the plain 1883 listener once clients use TLS, and change the <code>_mqtt._tcp</code> port in the Avahi file to 8883.</p>
+<p class="unsure"><strong>Unverified:</strong> this TLS setup uses a self-signed certificate and was not run end to end. Testers connecting from another machine need a copy of the certificate and must connect by a name or address listed in it. Mosquitto's handling of permissions and listener settings can differ between versions.</p></details>
 <details><summary>5. Turn off services you do not use</summary><p>Disable password SSH (use key-based login), remove telnet, UPnP, and WPS, and close any port you do not need. Re-run <code>nmap -sV fridge-01</code> and confirm the list got shorter.</p></details>
 <details><summary>6. Never forward ports to a device</summary><p>Do not expose appliance interfaces to the internet. Use a VPN into your network, or the vendor's cloud with multi-factor authentication.</p></details>
 <details><summary>7. Keep firmware and software updated</summary><p>Check for updates on a schedule, and replace devices that no longer receive security patches. Prefer vendors with a published update policy.</p></details>
@@ -492,6 +537,23 @@ keyfile /etc/mosquitto/certs/fridge.key</code></pre>
 </tbody></table></div>
 </section>
 
+<section id="known">
+<h2>Known issues and unverified areas</h2>
+<p>This guide was written without running it on a live system. Treat these as the places most likely to need adjustment, and report what you find.</p>
+<ul>
+<li><strong>All code and commands:</strong> not tested end to end on a fresh Ubuntu 24.04 install or a Raspberry Pi.</li>
+<li><strong>Interface names and addresses:</strong> <code>enp0s8</code> and <code>192.168.56.x</code> are examples. Check <code>ip -br a</code>.</li>
+<li><strong>Hypervisor menu names:</strong> adapter and network names differ by product and version.</li>
+<li><strong>TLS and Mosquitto permissions:</strong> see the notes in the protection section. Behavior varies by Mosquitto version.</li>
+<li><strong>SSH drop-in precedence:</strong> verify with <code>sshd -T</code>, as shown in Task 7.</li>
+<li><strong>mDNS from the tester VM:</strong> <code>fridge-01.local</code> only resolves if the tester has an mDNS resolver such as Avahi.</li>
+<li><strong>HIGH_TEMP fault:</strong> the cabinet rarely gets hot enough on its own to trigger it. Use <code>inject_fault</code> with the value <code>HIGH_TEMP</code>.</li>
+<li><strong>Manual test as root (Task 5):</strong> it is a shortcut and can leave root-owned files in <code>/opt/fridge</code>. If the service later fails with permission errors, run <code>sudo chown -R fridge:fridge /opt/fridge</code>.</li>
+<li><strong>Flask development server:</strong> fine for a lab. It is not a production web server.</li>
+<li><strong>Raspberry Pi hardware sensors:</strong> outlined only, not tested.</li>
+<li><strong>CSRF and retained-message exercises:</strong> described from how the code and broker should behave. Confirm them in your lab.</li>
+</ul>
+</section>
 </main>
 <footer><div class="wrap"><p>Provided for education and authorized testing. Use it only on systems you own or have explicit permission to test, and follow the laws that apply where you live.</p></div></footer>
 </body>
